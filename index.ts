@@ -62,6 +62,7 @@ import { loadAskUserSettings } from "./settings";
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
 const ASK_USER_VERSION: string = (_require("./package.json") as { version: string }).version;
+const WAITING_FOR_USER_MESSAGE = "Waiting for user response";
 
 /**
  * Emit a flat `{ type: "string", enum: [...] }` JSON Schema instead of the
@@ -520,12 +521,20 @@ function matchesSelectDown(data: string, keybindings: KeybindingsManager): boole
 function buildCustomUIOptions(
    displayMode: AskDisplayMode,
    onHandle?: (handle: OverlayHandle) => void,
-): { overlay?: boolean; overlayOptions?: OverlayOptions; onHandle?: (handle: OverlayHandle) => void } | undefined {
+): {
+   overlay?: boolean;
+   overlayOptions?: OverlayOptions;
+   onHandle?: (handle: OverlayHandle) => void;
+   blocked: { kind: "question"; message: string };
+} {
+   // Keep the annotation local so SDKs predating native blocked status still typecheck.
+   const blocked = { kind: "question" as const, message: WAITING_FOR_USER_MESSAGE };
    switch (displayMode) {
       case "inline":
-         return undefined;
+         return { blocked };
       case "overlay":
          return {
+            blocked,
             overlay: true,
             overlayOptions: {
                anchor: "center" as const,
@@ -540,6 +549,7 @@ function buildCustomUIOptions(
          const _exhaustive: never = displayMode;
          void _exhaustive;
          return {
+            blocked,
             overlay: true,
             overlayOptions: {
                anchor: "center" as const,
@@ -2668,7 +2678,7 @@ function resolvePromptSettings(params: AskParams): PromptSettings {
 
 /** Report the session as blocked on the user (`herdr:blocked`) for the duration of `run`. */
 async function whileBlocked<T>(pi: ExtensionAPI, run: () => Promise<T>): Promise<T> {
-   pi.events.emit("herdr:blocked", { active: true, label: "Waiting for user response" });
+   pi.events.emit("herdr:blocked", { active: true, label: WAITING_FOR_USER_MESSAGE });
    try {
       return await run();
    } finally {

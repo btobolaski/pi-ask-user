@@ -18,6 +18,9 @@ let emittedEvents: Array<{ name: string; payload: any }> = [];
 let isolatedAgentDir: string;
 let originalAgentDir: string | undefined;
 
+// Pin the requested native status text to the documented legacy herdr:blocked label.
+const EXPECTED_BLOCKED_OPTIONS = { blocked: { kind: "question", message: "Waiting for user response" } };
+
 function wrapPlainText(text: string, width = 80): string[] {
    const lines: string[] = [];
    for (const rawLine of text.split("\n")) {
@@ -469,6 +472,41 @@ describe("ask_user", () => {
       });
    });
 
+   for (const [kind, params] of [
+      ["single", { question: "Pick one?", options: ["A", "B"] }],
+      ["batch", { questions: [{ question: "First?", options: ["A"] }, { question: "Second?", options: ["B"] }] }],
+   ] as const) {
+      for (const displayMode of ["inline", "overlay"] as const) {
+         test(`annotates ${kind} custom UI as blocked on a question in ${displayMode} mode`, async () => {
+            const tool = await setupTool();
+            let capturedOptions: unknown;
+            const result = await tool.execute(
+               "tool-call-id",
+               { ...params, displayMode },
+               undefined,
+               undefined,
+               { hasUI: true, ui: {
+                  custom: async (_factory: unknown, options: unknown) => {
+                     capturedOptions = options;
+                     return null;
+                  },
+               } },
+            );
+
+            if (displayMode === "overlay") {
+               expect(capturedOptions).toMatchObject({
+                  ...EXPECTED_BLOCKED_OPTIONS,
+                  overlay: true,
+                  onHandle: expect.any(Function),
+               });
+            } else {
+               expect(capturedOptions).toEqual(EXPECTED_BLOCKED_OPTIONS);
+            }
+            expect(result.details.cancelled).toBe(true);
+         });
+      }
+   }
+
    test("uses overlay mode by default", async () => {
       const tool = await setupTool();
       let capturedOptions: any;
@@ -494,34 +532,6 @@ describe("ask_user", () => {
 
       expect(capturedOptions.overlay).toBe(true);
       expect(capturedOptions.overlayOptions.visible).toBeUndefined();
-   });
-
-   test("uses non-overlay custom UI when displayMode is inline", async () => {
-      const tool = await setupTool();
-      let capturedOptions: any;
-
-      const result = await tool.execute(
-         "tool-call-id",
-         {
-            question: "Which option should we use?",
-            options: ["A", "B"],
-            displayMode: "inline",
-         },
-         undefined,
-         undefined,
-         {
-            hasUI: true,
-            ui: {
-               custom: async (_factory: any, options: any) => {
-                  capturedOptions = options;
-                  return null;
-               },
-            },
-         },
-      );
-
-      expect(capturedOptions).toBeUndefined();
-      expect(result.details.cancelled).toBe(true);
    });
 
    test("inline mode resolves with the user's selection", async () => {
@@ -614,7 +624,7 @@ describe("ask_user", () => {
          },
       );
 
-      expect(capturedOptions).toBeUndefined();
+      expect(capturedOptions).toEqual(EXPECTED_BLOCKED_OPTIONS);
    });
 
    test("normalizes PI_ASK_USER_DISPLAY_MODE before applying it", async () => {
@@ -638,7 +648,7 @@ describe("ask_user", () => {
          },
       );
 
-      expect(capturedOptions).toBeUndefined();
+      expect(capturedOptions).toEqual(EXPECTED_BLOCKED_OPTIONS);
    });
 
    test("call-level displayMode overrides PI_ASK_USER_DISPLAY_MODE env var", async () => {
@@ -3978,14 +3988,14 @@ test("top-level single-question fields sent with questions are ignored (#88)", a
       test("uses ask-user.json displayMode when the env var and call-level value are unset", async () => {
          stubSettingsFile(JSON.stringify({ displayMode: "inline" }));
          const capturedOptions = await executeWithCapturedOptions({});
-         expect(capturedOptions).toBeUndefined();
+         expect(capturedOptions).toEqual(EXPECTED_BLOCKED_OPTIONS);
       });
 
       test("PI_ASK_USER_DISPLAY_MODE env var overrides ask-user.json", async () => {
          stubSettingsFile(JSON.stringify({ displayMode: "overlay" }));
          stubEnv("PI_ASK_USER_DISPLAY_MODE", "inline");
          const capturedOptions = await executeWithCapturedOptions({});
-         expect(capturedOptions).toBeUndefined();
+         expect(capturedOptions).toEqual(EXPECTED_BLOCKED_OPTIONS);
       });
 
       test("call-level displayMode overrides ask-user.json", async () => {
